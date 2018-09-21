@@ -1,12 +1,13 @@
 import http = require("http");
 import ws = require("ws");
 import uuid = require("uuid");
+import * as url from "url";
 import { EventEmitter } from "events";
 
 function uniqueId(n: number = 8): string {
     const letters = "abcdefghijklmnopqrstuvwxyz";
     let id = "";
-    for(let i=0 ; i<n ; i++) {
+    for (let i = 0; i < n; i++) {
         const char = letters[Math.floor(Math.random() * letters.length)];
         id += char;
     }
@@ -16,7 +17,6 @@ function uniqueId(n: number = 8): string {
 export interface Tunnel {
     ws: ws;
     channel: string;
-    bus: EventEmitter;
 }
 
 export type Method = "GET" | "POST" | "PUT" | "DELETE" | "OPTIONS" | "HEAD";
@@ -37,55 +37,121 @@ export interface TunnelMessage {
     error?: any;
 }
 
-export class TunnelRequest {
+export class TunnelRequest extends EventEmitter {
     readonly id: string;
     readonly tunnel: Tunnel;
-    constructor(id: string, tunnel: Tunnel) {
-        this.id = id;
+    private queue: Buffer[] = [];
+    private isSending: boolean = false;
+    static readonly MESSAGE_ID_HEADER = 8;
+    static readonly MESSAGE_COMMAND_HEADER = 1;
+
+    constructor(tunnel: Tunnel) {
+        super();
+        this.id = uniqueId(TunnelRequest.MESSAGE_ID_HEADER);
         this.tunnel = tunnel;
+        this.onMessage = this.onMessage.bind(this);
+        this.tunnel.ws.on("message", this.onMessage);
     }
 
-    header(method: string, headers: Object): void {
+    header(method: string, headers: Object, path: string, query: string): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("h");
-        const dataBuffer = new Buffer(JSON.stringify({method, headers}));
+        const dataBuffer = new Buffer(JSON.stringify({ method, headers, path, query }));
         const buffer = Buffer.concat([idBuffer, commandBuffer, dataBuffer]);
-        this.tunnel.ws.send(buffer);
+        this.queueSend(buffer);
     }
 
     send(data: Buffer): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("s");
         const buffer = Buffer.concat([idBuffer, commandBuffer, data]);
-        this.tunnel.ws.send(buffer);
+        this.queueSend(buffer);
     }
 
     end(): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("e");
         const buffer = Buffer.concat([idBuffer, commandBuffer]);
-        this.tunnel.ws.send(buffer);
+        this.queueSend(buffer);
     }
 
     abort(): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("a");
         const buffer = Buffer.concat([idBuffer, commandBuffer]);
-        this.tunnel.ws.send(buffer);
+        this.queueSend(buffer);
+    }
+
+    private onMessage(data: Buffer) {
+        if(data && data.length > TunnelRequest.MESSAGE_ID_HEADER) {
+            try {
+                const idBuffer = data.slice(0, TunnelRequest.MESSAGE_ID_HEADER);
+                const id = idBuffer.toString();
+                if (id === this.id) {
+                    const commandBuffer = data.slice(TunnelRequest.MESSAGE_ID_HEADER, TunnelRequest.MESSAGE_ID_HEADER + TunnelRequest.MESSAGE_COMMAND_HEADER);
+                    const command = commandBuffer.toString();
+                    if (command === "h") {
+                        const headerBuffer = data.slice(TunnelRequest.MESSAGE_ID_HEADER + TunnelRequest.MESSAGE_COMMAND_HEADER);
+                        const headers = JSON.parse(headerBuffer.toString());
+                        console.log(headers);
+                        this.emit("header", headers);
+                    } else if (command === "s") {
+                        const dataBuffer = data.slice(TunnelRequest.MESSAGE_ID_HEADER + TunnelRequest.MESSAGE_COMMAND_HEADER);
+                        this.emit("data", dataBuffer);
+                    } else if (command === "e") {
+                        this.emit("end");
+                    } else if (command === "a") {
+                        this.emit("abort");
+                    } else {
+                        this.emit("error", new Error(`Unsupported command is received. command=${command}`));
+                    }
+                }
+            } catch (error) {
+                this.emit("error", error);
+            }
+        }
+    }
+
+    private queueSend(buffer: Buffer): void {
+        this.queue.push(buffer);
+        this.sendToClient();
+    }
+
+    private sendToClient(): void {
+        if (this.tunnel.ws) {
+            if (this.isSending) {
+                // do nothing
+            } else if (this.queue.length) {
+                this.isSending = true;
+                const head = this.queue.shift();
+                this.tunnel.ws.send(head, (error) => {
+                    this.isSending = false;
+                    if (error) {
+                        this.queue = [];
+                        this.emit("error", error);
+                    } else {
+                        this.sendToClient();
+                    }
+                });
+            }
+        } else {
+            this.isSending = false;
+            this.queue = [];
+        }
     }
 }
 
 export class TunnelServer {
     private wsServer: ws.Server;
     private tunnels: Tunnel[] = [];
-    private timeout: number = 3000;
 
-    constructor(httpServer: http.Server, options: { timeout: number }) {
+    constructor(httpServer: http.Server) {
         this.wsServer = new ws.Server({ server: httpServer });
-        this.timeout = options.timeout;
 
         this.onConnection = this.onConnection.bind(this);
+        this.onError = this.onError.bind(this);
         this.wsServer.on("connection", this.onConnection);
+        this.wsServer.on("error", this.onError);
     }
 
     dispose(): void {
@@ -102,46 +168,50 @@ export class TunnelServer {
         }
     }
 
-    private onConnection(ws: ws, req: http.IncomingMessage): void {
-        this.tunnels.push({
-            ws: ws,
-            channel: null,
-            bus: new EventEmitter()
-        });
-        ws.on("message", this.onMessage.bind(this, ws));
-        ws.on("close", this.onClose.bind(this, ws));
+    private extractChannelFromURL(wsURL: string): string {
+        const parsed = url.parse(wsURL);
+        const match = parsed.path.match(/.*\/hoop\/([^\/|^?]*).*/);
+        if (match) {
+            return match[1];
+        } else {
+            return null;
+        }
     }
 
-    private onMessage(ws: ws, message: string): void {
-        try {
-            const json: TunnelMessage = JSON.parse(message);
-            if (json.command === "subscribe") {
-                const tunnel = this.tunnels.find(tunnel => tunnel.ws === ws);
-                if (tunnel) {
-                    tunnel.channel = json.channel;
-                }
-            }
-            if (json.session) {
-                const tunnel = this.tunnels.find(tunnel => tunnel.ws === ws);
-                if (tunnel) {
-                    tunnel.bus.emit(json.session, json);
-                }
-            }
-        } catch (error) {
-            console.error(error);
-        }
+    private onConnection(ws: ws, req: http.IncomingMessage): void {
+        const channel = this.extractChannelFromURL(req.url);
+        this.tunnels.push({
+            ws: ws,
+            channel: channel
+        });
+        console.log(`New connection. channel=${channel}`);
+        ws.on("close", this.onClose.bind(this, ws));
+        ws.on("error", this.onConnectionError.bind(this, ws));
+    }
+
+    private onError(error: Error) {
+        console.log("WS server error", error);
     }
 
     private onClose(ws: ws) {
         ws.removeAllListeners();
-        this.tunnels = this.tunnels.filter(tunnel => tunnel.ws !== ws);
+        const exist = this.tunnels.find(tunnel => tunnel.ws === ws);
+        if (exist) {
+            this.tunnels = this.tunnels.filter(tunnel => tunnel !== exist);
+            console.log(`Connection closed. channel=${exist.channel}`);
+        }
+    }
+
+    private onConnectionError(ws: ws, error: Error) {
+        console.log(error);
+        ws.close();
+        this.onClose(ws);
     }
 
     request(channel: string): TunnelRequest {
         const tunnel = this.tunnels.find(tunnel => tunnel.channel === channel);
-        if(tunnel) {
-            const id = uniqueId();
-            return new TunnelRequest(id, tunnel);
+        if (tunnel) {
+            return new TunnelRequest(tunnel);
         } else {
             return null;
         }
