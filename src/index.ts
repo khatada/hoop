@@ -32,7 +32,7 @@ function extractQuery(url: string): string {
 app.all("/hoop/:channel/*", (req, res) => {
     const channel: string = req.params.channel;
     const path = extractPath(req.path, channel);
-    console.log(`Tunnel channel=${channel} method=${req.method} path=${path} url=${req.url}`);
+    // console.log(`Tunnel channel=${channel} method=${req.method} path=${path} url=${req.url}`);
     const tunnelRequest = tunnel.request(channel);
     if (tunnelRequest) {
         tunnelRequest.header(req.method, req.headers, path, extractQuery(req.url));
@@ -58,6 +58,10 @@ app.all("/hoop/:channel/*", (req, res) => {
             res.end();
         });
         tunnelRequest.on("abort", () => {
+            res.status(500);
+            res.end();
+        });
+        tunnelRequest.on("error", () => {
             res.status(500);
             res.end();
         });

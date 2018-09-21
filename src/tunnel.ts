@@ -53,33 +53,39 @@ export class TunnelRequest extends EventEmitter {
         this.tunnel.ws.on("message", this.onMessage);
     }
 
+    dispose() {
+        if(this.tunnel.ws) { 
+            this.tunnel.ws.removeListener("message", this.onMessage);
+        }
+    }
+
     header(method: string, headers: Object, path: string, query: string): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("h");
         const dataBuffer = new Buffer(JSON.stringify({ method, headers, path, query }));
         const buffer = Buffer.concat([idBuffer, commandBuffer, dataBuffer]);
-        this.queueSend(buffer);
+        this.sendToClient(buffer);
     }
 
     send(data: Buffer): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("s");
         const buffer = Buffer.concat([idBuffer, commandBuffer, data]);
-        this.queueSend(buffer);
+        this.sendToClient(buffer);
     }
 
     end(): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("e");
         const buffer = Buffer.concat([idBuffer, commandBuffer]);
-        this.queueSend(buffer);
+        this.sendToClient(buffer);
     }
 
     abort(): void {
         const idBuffer = new Buffer(this.id);
         const commandBuffer = new Buffer("a");
         const buffer = Buffer.concat([idBuffer, commandBuffer]);
-        this.queueSend(buffer);
+        this.sendToClient(buffer);
     }
 
     private onMessage(data: Buffer) {
@@ -93,50 +99,36 @@ export class TunnelRequest extends EventEmitter {
                     if (command === "h") {
                         const headerBuffer = data.slice(TunnelRequest.MESSAGE_ID_HEADER + TunnelRequest.MESSAGE_COMMAND_HEADER);
                         const headers = JSON.parse(headerBuffer.toString());
-                        console.log(headers);
                         this.emit("header", headers);
                     } else if (command === "s") {
                         const dataBuffer = data.slice(TunnelRequest.MESSAGE_ID_HEADER + TunnelRequest.MESSAGE_COMMAND_HEADER);
                         this.emit("data", dataBuffer);
                     } else if (command === "e") {
                         this.emit("end");
+                        this.dispose();
                     } else if (command === "a") {
                         this.emit("abort");
+                        this.dispose();
                     } else {
                         this.emit("error", new Error(`Unsupported command is received. command=${command}`));
+                        this.dispose();
                     }
                 }
             } catch (error) {
                 this.emit("error", error);
+                this.dispose();
             }
         }
     }
 
-    private queueSend(buffer: Buffer): void {
-        this.queue.push(buffer);
-        this.sendToClient();
-    }
-
-    private sendToClient(): void {
-        if (this.tunnel.ws) {
-            if (this.isSending) {
-                // do nothing
-            } else if (this.queue.length) {
-                this.isSending = true;
-                const head = this.queue.shift();
-                this.tunnel.ws.send(head, (error) => {
-                    this.isSending = false;
-                    if (error) {
-                        this.queue = [];
-                        this.emit("error", error);
-                    } else {
-                        this.sendToClient();
-                    }
-                });
-            }
-        } else {
-            this.isSending = false;
-            this.queue = [];
+    private sendToClient(buffer: Buffer): void {
+        if (this.tunnel.ws){
+            this.tunnel.ws.send(buffer, (error) => {
+                if (error) {
+                    this.emit("error", error);
+                    this.dispose();
+                }
+            });
         }
     }
 }
