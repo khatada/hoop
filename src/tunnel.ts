@@ -1,18 +1,10 @@
 import http = require("http");
 import ws = require("ws");
 import * as url from "url";
+import * as querystring from "querystring";
 import { EventEmitter } from "events";
-import logger from "logger";
-
-function uniqueId(n: number = 8): string {
-    const letters = "abcdefghijklmnopqrstuvwxyz";
-    let id = "";
-    for (let i = 0; i < n; i++) {
-        const char = letters[Math.floor(Math.random() * letters.length)];
-        id += char;
-    }
-    return id;
-}
+import logger from "./logger";
+import { uniqueId } from "./util";
 
 export interface Tunnel {
     ws: ws;
@@ -134,9 +126,11 @@ export class TunnelRequest extends EventEmitter {
 export class TunnelServer {
     private wsServer: ws.Server;
     private tunnels: Tunnel[] = [];
+    readonly authToken: string;
 
-    constructor(httpServer: http.Server) {
+    constructor(httpServer: http.Server, authToken: string) {
         this.wsServer = new ws.Server({ server: httpServer });
+        this.authToken = authToken;
 
         this.onConnection = this.onConnection.bind(this);
         this.onError = this.onError.bind(this);
@@ -168,15 +162,26 @@ export class TunnelServer {
         }
     }
 
+    private authConnection(wsURL: string): boolean {
+        const queryText = url.parse(wsURL).query;
+        const query = querystring.parse(queryText);
+        return query.auth === this.authToken;
+    }
+
     private onConnection(ws: ws, req: http.IncomingMessage): void {
         const channel = this.extractChannelFromURL(req.url);
-        this.tunnels.push({
-            ws: ws,
-            channel: channel
-        });
-        logger.info(`New connection. channel=${channel}`);
-        ws.on("close", this.onClose.bind(this, ws));
-        ws.on("error", this.onConnectionError.bind(this, ws));
+        if(channel && this.authConnection(req.url)) {
+            this.tunnels.push({
+                ws: ws,
+                channel: channel
+            });
+            logger.info(`New connection. channel=${channel}`);
+            ws.on("close", this.onClose.bind(this, ws));
+            ws.on("error", this.onConnectionError.bind(this, ws));
+        } else {
+            logger.info(`Authentication failed. channel=${channel}`);
+            ws.close(1);
+        }
     }
 
     private onError(error: Error) {

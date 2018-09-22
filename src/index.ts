@@ -3,10 +3,16 @@ import * as express from "express";
 
 import logger from "./logger";
 import { TunnelServer } from "./tunnel";
+import { uniqueId } from "./util";
+
+const authToken = process.env.AUTH_TOKEN || uniqueId();
+if (!process.env.AUTH_TOKEN) {
+    logger.error(`Authentication token is not set.`);
+}
 
 const app = express();
 const server = http.createServer(app);
-const tunnel = new TunnelServer(server);
+const tunnel = new TunnelServer(server, authToken);
 
 function extractPath(path: string, channel: string): string {
     const prefix = `/hoop/${channel}`;
@@ -15,7 +21,7 @@ function extractPath(path: string, channel: string): string {
 
 function extractQuery(url: string): string {
     const query = url.indexOf("?");
-    if(query >= 0) {
+    if (query >= 0) {
         return url.substring(query + 1);
     } else {
         return "";
@@ -24,7 +30,7 @@ function extractQuery(url: string): string {
 
 app.use((req, res, next) => {
     res.once("finish", () => {
-        if(res.statusCode >= 400) {
+        if (res.statusCode >= 400) {
             logger.warn(`${req.method} ${req.url} ${res.statusCode}`);
         } else {
             logger.debug(`${req.method} ${req.url} ${res.statusCode}`);
@@ -37,6 +43,20 @@ app.get("/", (req, res) => {
     res.status(200);
     res.send("Hoop is running");
     res.end();
+});
+
+app.use((req, res, next) => {
+    if (req.query.auth === authToken) {
+        next();
+    } else {
+        const authHeader = req.header("authorization") || "";
+        if (authHeader.trim() === `token ${authToken}`) {
+            next();
+        } else {
+            res.status(403);
+            res.send(`Authentication failed`);
+        }
+    }
 });
 
 app.all("/hoop/:channel/*", (req, res) => {
@@ -82,5 +102,5 @@ app.all("/hoop/:channel/*", (req, res) => {
 
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
-    console.log(`Hoop start. port=${port}`);
+    logger.info(`Hoop start. port=${port}`);
 });
