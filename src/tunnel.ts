@@ -1,8 +1,8 @@
 import http = require("http");
 import ws = require("ws");
-import uuid = require("uuid");
 import * as url from "url";
 import { EventEmitter } from "events";
+import logger from "logger";
 
 function uniqueId(n: number = 8): string {
     const letters = "abcdefghijklmnopqrstuvwxyz";
@@ -40,8 +40,6 @@ export interface TunnelMessage {
 export class TunnelRequest extends EventEmitter {
     readonly id: string;
     readonly tunnel: Tunnel;
-    private queue: Buffer[] = [];
-    private isSending: boolean = false;
     static readonly MESSAGE_ID_HEADER = 8;
     static readonly MESSAGE_COMMAND_HEADER = 1;
 
@@ -176,13 +174,13 @@ export class TunnelServer {
             ws: ws,
             channel: channel
         });
-        console.log(`New connection. channel=${channel}`);
+        logger.info(`New connection. channel=${channel}`);
         ws.on("close", this.onClose.bind(this, ws));
         ws.on("error", this.onConnectionError.bind(this, ws));
     }
 
     private onError(error: Error) {
-        console.log("WS server error", error);
+        logger.warn("WS server error", error);
     }
 
     private onClose(ws: ws) {
@@ -190,12 +188,12 @@ export class TunnelServer {
         const exist = this.tunnels.find(tunnel => tunnel.ws === ws);
         if (exist) {
             this.tunnels = this.tunnels.filter(tunnel => tunnel !== exist);
-            console.log(`Connection closed. channel=${exist.channel}`);
+            logger.info(`Connection closed. channel=${exist.channel}`);
         }
     }
 
     private onConnectionError(ws: ws, error: Error) {
-        console.log(error);
+        logger.warn(error);
         ws.close();
         this.onClose(ws);
     }

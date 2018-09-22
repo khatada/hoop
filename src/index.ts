@@ -1,17 +1,10 @@
 import * as http from "http";
 import * as express from "express";
 
-import { TunnelServer, Method } from "./tunnel";
+import logger from "./logger";
+import { TunnelServer } from "./tunnel";
 
 const app = express();
-
-app.get("/", (req, res) => {
-    res.status(200);
-    res.send("Hoop is running");
-    res.end();
-});
-
-
 const server = http.createServer(app);
 const tunnel = new TunnelServer(server);
 
@@ -29,10 +22,26 @@ function extractQuery(url: string): string {
     }
 }
 
+app.use((req, res, next) => {
+    res.once("finish", () => {
+        if(res.statusCode >= 400) {
+            logger.warn(`${req.method} ${req.url} ${res.statusCode}`);
+        } else {
+            logger.debug(`${req.method} ${req.url} ${res.statusCode}`);
+        }
+    });
+    next();
+});
+
+app.get("/", (req, res) => {
+    res.status(200);
+    res.send("Hoop is running");
+    res.end();
+});
+
 app.all("/hoop/:channel/*", (req, res) => {
     const channel: string = req.params.channel;
     const path = extractPath(req.path, channel);
-    // console.log(`Tunnel channel=${channel} method=${req.method} path=${path} url=${req.url}`);
     const tunnelRequest = tunnel.request(channel);
     if (tunnelRequest) {
         tunnelRequest.header(req.method, req.headers, path, extractQuery(req.url));
@@ -74,4 +83,4 @@ app.all("/hoop/:channel/*", (req, res) => {
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
     console.log(`Hoop start. port=${port}`);
-})
+});
