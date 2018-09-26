@@ -46,7 +46,8 @@ app.get("/", (req, res) => {
 });
 
 app.use((req, res, next) => {
-    if (req.query.auth === authToken) {
+    const auth = req.query.auth || "";
+    if (auth.trim() === authToken) {
         next();
     } else {
         const authHeader = req.header("authorization") || "";
