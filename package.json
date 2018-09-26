@@ -7,7 +7,8 @@
     "start": "node index.js",
     "build": "tsc",
     "build:start": "tsc & node index.js",
-    "build:watch": "tsc --watch"
+    "build:watch": "tsc --watch",
+    "postinstall": "tsc"
   },
   "keywords": [],
   "author": "koki.hatada@gmail.com",
