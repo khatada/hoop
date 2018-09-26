@@ -67,6 +67,7 @@ app.all("/hoop/:channel/*", (req, res) => {
     if (tunnelRequest) {
         tunnelRequest.header(req.method, req.headers, path, extractQuery(req.url));
         req.on("data", (chunk: Buffer) => {
+            logger.info(chunk.toString());
             tunnelRequest.send(chunk);
         });
         req.on("end", () => {
