@@ -1,5 +1,6 @@
 import * as http from "http";
 import * as express from "express";
+import * as querystring from "querystring";
 
 import logger from "./logger";
 import { TunnelServer } from "./tunnel";
@@ -20,9 +21,13 @@ function extractPath(path: string, channel: string): string {
 }
 
 function extractQuery(url: string): string {
-    const query = url.indexOf("?");
-    if (query >= 0) {
-        return url.substring(query + 1);
+    const queryStart = url.indexOf("?");
+    if (queryStart >= 0) {
+        const query = querystring.parse(url.substring(queryStart + 1));
+        if (query.auth) {
+            delete query.auth;
+        }
+        return querystring.stringify(query);
     } else {
         return "";
     }
