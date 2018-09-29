@@ -11,7 +11,8 @@ const logger = winston.createLogger({
                 winston.format.printf(nfo => {
                     return `${nfo.timestamp} ${nfo.level}: ${nfo.message}`;
                 })
-            )
+            ),
+            handleExceptions: true
         })
     ]
 });

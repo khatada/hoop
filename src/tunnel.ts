@@ -180,7 +180,7 @@ export class TunnelServer {
             ws.on("error", this.onConnectionError.bind(this, ws));
         } else {
             logger.info(`Authentication failed. channel=${channel}`);
-            ws.close(1);
+            ws.close();
         }
     }
 
