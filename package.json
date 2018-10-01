@@ -12,7 +12,14 @@
   },
   "keywords": [],
   "author": "koki.hatada@gmail.com",
-  "license": "ISC",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/khatada/hoop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/khatada/hoop/issues"
+  },
   "devDependencies": {
     "@types/express": "^4.0.38",
     "@types/uuid": "^3.4.3",
